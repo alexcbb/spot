@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=dinosaur
-#SBATCH --output=logs/dinosaur/dinosaur.%j.out
-#SBATCH --error=logs/dinosaur/dinosaur.%j.err
+#SBATCH --output=output/dinosaur/dinosaur.%j.out
+#SBATCH --error=output/dinosaur/dinosaur.%j.err
 
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:quadro_rtx_6000:1
