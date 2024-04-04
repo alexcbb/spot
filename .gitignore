@@ -7,6 +7,7 @@ __pycache__/
 logs
 results
 wandb
+*.pth
 # C extensions
 *.so
 
