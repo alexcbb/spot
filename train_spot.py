@@ -19,6 +19,10 @@ from ocl_metrics import UnsupervisedMaskIoUMetric, ARIMetric
 from utils_spot import inv_normalize, cosine_scheduler, visualize, bool_flag, load_pretrained_encoder
 import models_vit
 
+import wandb
+import string
+import random
+
 
 def get_args_parser():
     parser = argparse.ArgumentParser('SPOT', add_help=False)
@@ -211,6 +215,12 @@ def train(args):
     
     visualize_per_epoch = int(args.epochs*args.eval_viz_percent)
     
+
+    wandb.login()
+    letters = string.ascii_lowercase
+    run_name = f"DINOSAUR-coco-spots-cript-" + "".join(random.choice(letters) for i in range(8))
+    wandb.init(project="SlotCon", name=run_name)
+
     for epoch in range(start_epoch, args.epochs):
     
         model.train()
@@ -240,6 +250,14 @@ def train(args):
                     writer.add_scalar('TRAIN/mse', mse.item(), global_step)
                     writer.add_scalar('TRAIN/lr_main', lr_value, global_step)
                     writer.add_scalar('TRAIN/total_norm', total_norm, global_step)
+
+                    wandb.log({
+                        "train_loss": mse.item(), 
+                        "recons_loss": mse.item(),
+                        "lr": lr_value,
+                        "step": global_step
+                        })
+
 
         with torch.no_grad():
             model.eval()
@@ -307,6 +325,17 @@ def train(args):
             writer.add_scalar('VAL/mbo_c (slots)', mbo_c_slot, epoch+1)
             writer.add_scalar('VAL/mbo_i (slots)', mbo_i_slot, epoch+1)
             writer.add_scalar('VAL/miou (slots)', miou_slot, epoch+1)
+            wandb.log({
+                "val_mse": val_mse,
+                "val_ari": ari,
+                "val_mbo_c": mbo_c,
+                "val_mbo_i": mbo_i,
+                "val_miou": miou,
+                "val_ari_slot": ari_slot,
+                "val_mbo_c_slot": mbo_c_slot,
+                "val_mbo_i_slot": mbo_i_slot,
+                "val_miou_slot": miou_slot
+            })
             
             print(args.log_path)
             print('====> Epoch: {:3} \t Loss = {:F} \t MSE = {:F} \t ARI = {:F} \t ARI_slots = {:F} \t mBO_c = {:F} \t mBO_i = {:F} \t miou = {:F} \t mBO_c_slots = {:F} \t mBO_i_slots = {:F} \t miou_slots = {:F}'.format(

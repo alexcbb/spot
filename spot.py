@@ -290,3 +290,116 @@ class SPOT(nn.Module):
         dec_slots_attns = dec_slots_attns.transpose(-1, -2).reshape(B, self.num_slots, H_enc, W_enc)
 
         return loss_mse, slots_attns, dec_slots_attns, slots, dec_recon, attn_logits
+
+
+
+class SPOTEval(nn.Module):
+    def __init__(self, encoder, args):
+        super().__init__()
+
+        self.encoder = encoder
+
+        # Estimate number of tokens for images of size args.image_size and
+        # embedding size (d_model)
+        with torch.no_grad():
+            x = torch.rand(1, 3, args.image_size, args.image_size)
+            x = self.forward_encoder(x, self.encoder)
+            _, num_tokens, embed_dim = x.shape
+
+
+        self.num_slots = args.num_obj
+        self.embed_dim = embed_dim
+
+        self.slot_attn = SlotAttentionEncoder(
+            3, args.num_obj,
+            embed_dim, args.dim_slot, args.dim_hidden, 4,
+            "none", "shared_gaussian")
+
+
+        self.input_proj = nn.Sequential(
+            nn.Linear(embed_dim, embed_dim),
+            nn.LayerNorm(embed_dim),
+        )
+        
+        self.bos_tokens = nn.Parameter(torch.zeros(1, 1, 1, embed_dim))
+        torch.nn.init.normal_(self.bos_tokens, std=.02)
+        
+        self.slot_proj = nn.Sequential(
+            nn.Linear(args.dim_slot, embed_dim),
+            nn.LayerNorm(embed_dim),
+        )
+        self.dec_input_dim = embed_dim
+
+        self.dec = TransformerDecoder(4, num_tokens, embed_dim, 6, 0.0, None)
+
+        self.dec_slots_attns = []
+        def hook_fn_forward_attn(module, input):
+            self.dec_slots_attns.append(input[0])
+        self.remove_handle = self.dec._modules["blocks"][-1]._modules["encoder_decoder_attn"]._modules["attn_dropout"].register_forward_pre_hook(hook_fn_forward_attn)
+
+
+    def forward_encoder(self, x, encoder):
+        encoder.eval()
+
+        x = encoder.prepare_tokens(x)
+
+        for blk in encoder.blocks:
+            x = blk(x)
+        
+        x = x[:, 1:] # remove the [CLS] and (if they exist) registers tokens 
+
+        return x
+
+    def forward_decoder(self, slots, emb_target):
+        # Prepate the input tokens for the decoder transformer:
+        # (1) insert a learnable beggining-of-sequence ([BOS]) token at the beggining of each target embedding sequence.
+        # (2) remove the last token of the target embedding sequence
+        # (3) no need to add positional embeddings since positional information already exists at the DINO's outptu.
+        
+        bos_token = self.bos_tokens[0].expand(emb_target.shape[0], -1, -1)
+        dec_input = torch.cat((bos_token, emb_target[:, :-1, :]), dim=1)
+    
+        # Proj
+        dec_input = self.input_proj(dec_input)
+        dec_input_slots = self.slot_proj(slots) # shape: [B, num_slots, D]
+
+        dec_output = self.dec(dec_input, dec_input_slots, causal_mask=True)
+
+        dec_slots_attns = self.dec_slots_attns[0]
+        self.dec_slots_attns = []
+
+        # sum over the heads and 
+        dec_slots_attns = dec_slots_attns.sum(dim=1) # [B, N, num_slots]
+        # dec_slots_attns shape [B, num_heads, N, num_slots]
+        # L1-normalize over the slots so as to sum to 1.
+        dec_slots_attns = dec_slots_attns / dec_slots_attns.sum(dim=2, keepdim=True)
+
+        return dec_output, dec_slots_attns
+
+    def forward(self, image):
+        """
+        image: batch_size x img_channels x H x W
+        """
+
+        B, _, H, W = image.size()
+        emb_input = self.forward_encoder(image, self.encoder)
+        emb_target = emb_input.clone().detach()
+        # emb_target shape: B, N, D
+
+        # Apply the slot attention
+        slots, slots_attns, init_slots, attn_logits = self.slot_attn(emb_input)
+        # slots shape: [B, num_slots, Ds]
+        # slots_attns shape: [B, N, num_slots]
+
+        # Apply the decoder.
+        dec_recon, dec_slots_attns = self.forward_decoder(slots, emb_target)
+
+        # Mean-Square-Error loss
+        H_enc, W_enc = int(math.sqrt(emb_target.shape[1])), int(math.sqrt(emb_target.shape[1]))
+        loss_mse = ((emb_target - dec_recon) ** 2).sum()/(B*H_enc*W_enc*self.embed_dim)
+
+        # Reshape the slot and decoder-slot attentions.
+        slots_attns = slots_attns.transpose(-1, -2).reshape(B, self.num_slots, H_enc, W_enc)
+        dec_slots_attns = dec_slots_attns.transpose(-1, -2).reshape(B, self.num_slots, H_enc, W_enc)
+
+        return loss_mse, slots_attns, dec_slots_attns, slots, dec_recon, attn_logits
