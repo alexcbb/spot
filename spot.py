@@ -672,7 +672,8 @@ class DINOUp(nn.Module):
         recons = out[:, :, :C, :, :]  # [B, num_slots, 3, H, W]
         dec_masks = out[:, :, -1:, :, :]
         dec_masks = F.softmax(dec_masks, dim=1)  # [B, num_slots, 1, H, W]
-        recons = torch.sum(recons * dec_masks, dim=1)  # [B, 3, H, W]
+        recons = torch.sum(recons * dec_masks, dim=1)  # [B, C, H, W]
+        recons = recons.flatten(2, 3).permute(0, 2, 1)
 
         # Mean-Square-Error loss
         H_enc, W_enc = int(math.sqrt(emb_target.shape[1])), int(math.sqrt(emb_target.shape[1]))
