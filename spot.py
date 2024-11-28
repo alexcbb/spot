@@ -628,7 +628,6 @@ class DINOUp(nn.Module):
                     act='relu'))
             out_size = deconv_out_shape(out_size, stride, self.dec_ks // 2,
                                         self.dec_ks, stride - 1)
-            print(f"Decoder output size: {out_size}")
 
         # out Conv for RGB and seg mask
         modules.append(
@@ -665,11 +664,16 @@ class DINOUp(nn.Module):
         # Apply the decoder.
         # dec_input_slots = self.slot_proj(slots) # shape: [B, num_slots, D]
         # recons, dec_masks = self.dec(dec_input_slots)
+        print(f"Slots shape: {slots.shape}")
         decoder_in = slots.view(B * S, D, 1, 1)
+        print(f"Decoder input shape: {decoder_in.shape}")
         decoder_in = decoder_in.repeat(1, 1, self.dec_resolution[0], self.dec_resolution[1])
+        print(f"Decoder input shape after repeat: {decoder_in.shape}")  
         out = self.decoder_pos_embedding(decoder_in)
+        print(f"Decoder input shape after pos embedding: {out.shape}")
         out = self.decoder(out)
         print(f"Decoder output shape: {out.shape}")
+        print(f"B, S, C, H, W: {B, S, C, self.image_size, self.image_size}")
         out = out.view(B, S, C + 1, self.image_size, self.image_size)
         recons = out[:, :, :C, :, :]  # [B, num_slots, 3, H, W]
         dec_masks = out[:, :, -1:, :, :]
