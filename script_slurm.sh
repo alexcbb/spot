@@ -33,7 +33,6 @@ CUDA_VISIBLE_DEVICES=0 torchrun --master_port 13000 --nproc_per_node=1 \
     --which_encoder dino_vitb16 \
     --dataset coco \
     --data_path ${data_dir} \
-    --batch_size 128 \
     --epochs 30 \
     --num_slots 7 \
     --train_permutations standard \
