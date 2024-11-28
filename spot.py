@@ -648,7 +648,7 @@ class DINOUp(nn.Module):
         B, _, H, W = image.size()
         self.upsampler.eval()
         emb_input = self.upsampler.model(image)
-        H_enc, W_enc = int(math.sqrt(emb_input.shape[2])), int(math.sqrt(emb_input.shape[2]))
+        H_enc, W_enc = emb_input.shape[-1], emb_input.shape[-1]
         with torch.no_grad():
             emb_target = self.upsampler.upsampler(emb_input, image).clone().detach().flatten(-2, -1).permute(0, 2, 1)
             B, N, C = emb_target.shape
