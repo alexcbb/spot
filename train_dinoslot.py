@@ -162,7 +162,7 @@ def train(args):
         args.num_cross_heads = args.num_heads
     
     if 'featup' in args.which_encoder:
-        model = DINOUp(encoder, args, encoder_second)
+        model = DINOUp(encoder, args)
     else:
         model = SPOT(encoder, args, encoder_second)
     
