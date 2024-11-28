@@ -606,7 +606,7 @@ class DINOUp(nn.Module):
             hidden_features=args.mlp_dec_hidden
         )"""
 
-        self.dec_channels = [args.slot_size, 64, 64, 64, 64]
+        self.dec_channels = [args.slot_size, 64, 64, 64, 64, 64]
         self.dec_resolution = (7, 7) # broadcast size
         self.dec_ks = 5  # kernel size
         self.dec_norm = ''  # norm in CNN
@@ -628,6 +628,7 @@ class DINOUp(nn.Module):
                     act='relu'))
             out_size = deconv_out_shape(out_size, stride, self.dec_ks // 2,
                                         self.dec_ks, stride - 1)
+            print(f"Decoder output size: {out_size}")
 
         # out Conv for RGB and seg mask
         modules.append(
@@ -668,6 +669,7 @@ class DINOUp(nn.Module):
         decoder_in = decoder_in.repeat(1, 1, self.dec_resolution[0], self.dec_resolution[1])
         out = self.decoder_pos_embedding(decoder_in)
         out = self.decoder(out)
+        print(f"Decoder output shape: {out.shape}")
         out = out.view(B, S, C + 1, self.image_size, self.image_size)
         recons = out[:, :, :C, :, :]  # [B, num_slots, 3, H, W]
         dec_masks = out[:, :, -1:, :, :]
