@@ -5,7 +5,7 @@ from mlp import MlpDecoder
 import torch
 import random
 import math
-
+from torch_pca import PCA
 
 class SPOT(nn.Module):
     def __init__(self, encoder, args, second_encoder=None):
@@ -488,10 +488,12 @@ class DINOUp(nn.Module):
         )
         self.dec = MlpDecoder(
             object_dim=args.d_model, 
-            output_dim=args.d_model, 
+            output_dim=30, 
             num_patches=args.image_size**2, 
             hidden_features=args.mlp_dec_hidden
         )
+
+        self.pca = PCA(n_components=30,) # TODO : choose the right num of components
 
     def forward(self, image):
         """
@@ -503,6 +505,7 @@ class DINOUp(nn.Module):
         emb_input = self.upsampler.model(image)
         with torch.no_grad():
             emb_target = self.upsampler.upsampler(emb_input, image).clone().detach().flatten(-2, -1).permute(0, 2, 1)
+            emb_target = self.pca.fit_transform(emb_target) # Reduce the dimensionality of the embeddings
         # emb_target shape: B, N, D ==> here high res
         emb_input = emb_input.flatten(2).transpose(1, 2)
         

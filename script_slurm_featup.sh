@@ -3,12 +3,12 @@
 #SBATCH --job-name=dinosaur_featup
 #SBATCH --output=logs/dinosaur_featup.%j.out
 #SBATCH --error=logs/dinosaur_featup.%j.err
-#SBATCH -A uli@v100
-#SBATCH -C v100-32g
+#SBATCH -A uli@a100
+#SBATCH -C a100
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=10
+#SBATCH --cpus-per-task=8
 #SBATCH --hint=nomultithread
 #SBATCH -t 20:00:00
 #SBATCH --qos=qos_gpu-t3
@@ -33,7 +33,7 @@ CUDA_VISIBLE_DEVICES=0 torchrun --master_port 13000 --nproc_per_node=1 \
     train_dinoslot.py \
     --which_encoder featup_dino16 \
     --dataset coco \
-    --batch_size 16 \
+    --batch_size 64 \
     --data_path ${data_dir} \
     --epochs 30 \
     --num_slots 7 \
