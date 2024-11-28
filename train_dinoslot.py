@@ -139,10 +139,10 @@ def train(args):
         encoder = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg')
     elif args.which_encoder == 'featup_dino16':
         args.max_tokens = args.val_image_size**2
-        encoder = torch.hub.load('mhamilton723/FeatUp', 'dino16')
+        encoder = torch.hub.load('mhamilton723/FeatUp', 'dino16', use_norm=False)
     elif args.which_encoder == 'featup_dinov2':
         args.max_tokens = args.val_image_size**2
-        encoder = torch.hub.load('mhamilton723/FeatUp', 'dinov2')
+        encoder = torch.hub.load('mhamilton723/FeatUp', 'dinov2', use_norm=False)
     elif args.which_encoder == 'mae_vitb16':
         args.max_tokens = int((args.val_image_size/16)**2)
         encoder = models_vit.__dict__["vit_base_patch16"](num_classes=0, global_pool=False, drop_path_rate=0)
