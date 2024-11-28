@@ -33,6 +33,7 @@ CUDA_VISIBLE_DEVICES=0 torchrun --master_port 13000 --nproc_per_node=1 \
     train_dinoslot.py \
     --which_encoder featup_dino16 \
     --dataset coco \
+    --batch_size 16 \
     --data_path ${data_dir} \
     --epochs 30 \
     --num_slots 7 \

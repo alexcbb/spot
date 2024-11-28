@@ -508,14 +508,11 @@ class DINOUp(nn.Module):
         
         # Apply the slot attention
         slots, slots_attns, _, attn_logits = self.slot_attn(emb_input)
-        print(f"slots.shape: {slots.shape} and slots_attns.shape: {slots_attns.shape}")
         attn_logits = attn_logits.squeeze()
-        print(f"attn_logits.shape: {attn_logits.shape}")
-        # slots shape: [B, num_slots, Ds]
-        # slots_attns shape: [B, N, num_slots]
 
         # Apply the decoder.
         dec_input_slots = self.slot_proj(slots) # shape: [B, num_slots, D]
+        print(f"dec_input_slots.shape: {dec_input_slots.shape}")
         recons, dec_masks = self.dec(dec_input_slots)
         print(f"recons.shape: {recons.shape} and dec masks shape: {dec_masks.shape}")
 
