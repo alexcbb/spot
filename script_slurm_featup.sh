@@ -31,7 +31,7 @@ output_dir="./output/dinosaur"
 
 CUDA_VISIBLE_DEVICES=0 torchrun --master_port 13000 --nproc_per_node=1 \
     train_dinoslot.py \
-    --which_encoder dino_vitb16 \
+    --which_encoder featup_dino16 \
     --dataset coco \
     --data_path ${data_dir} \
     --batch_size 128 \

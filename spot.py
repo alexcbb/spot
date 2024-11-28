@@ -291,6 +291,262 @@ class SPOT(nn.Module):
 
         return loss_mse, slots_attns, dec_slots_attns, slots, dec_recon, attn_logits
 
+class DINOSlot(nn.Module):
+    def __init__(self, encoder, args):
+        super().__init__()
+
+        self.which_encoder = args.which_encoder
+        self.encoder = encoder
+        self.encoder_final_norm = args.encoder_final_norm
+        
+        for param in self.encoder.parameters():
+            param.requires_grad = False  # not update by gradient
+            
+        # Estimate number of tokens for images of size args.image_size and
+        # embedding size (d_model)
+        with torch.no_grad():
+            x = torch.rand(1, args.img_channels, args.image_size, args.image_size)
+            x = self.forward_encoder(x, self.encoder)
+            _, num_tokens, d_model = x.shape
+
+        args.d_model = d_model
+
+        self.num_slots = args.num_slots
+        self.d_model = args.d_model
+
+        self.slot_attn = SlotAttentionEncoder(
+            args.num_iterations, 
+            args.num_slots,
+            args.d_model, 
+            args.slot_size, 
+            args.mlp_hidden_size, 
+            args.pos_channels,
+            args.truncate, 
+            args.init_method
+        )
+
+        self.input_proj = nn.Sequential(
+            linear(args.d_model, args.d_model, bias=False),
+            nn.LayerNorm(args.d_model),
+        )
+        
+        self.bos_tokens = nn.Parameter(torch.zeros(1, 1, args.d_model))
+        torch.nn.init.normal_(self.bos_tokens, std=.02)
+        
+        self.dec_type = args.dec_type
+        self.use_slot_proj = args.use_slot_proj
+        
+        self.dec = TransformerDecoder(
+            args.num_dec_blocks, 
+            args.max_tokens, 
+            args.d_model, 
+            args.num_heads, 
+            args.dropout, 
+            args.num_cross_heads
+        )
+                
+        self.dec_slots_attns = []
+        def hook_fn_forward_attn(module, input):
+            self.dec_slots_attns.append(input[0])
+        self.remove_handle = self.dec._modules["blocks"][-1]._modules["encoder_decoder_attn"]._modules["attn_dropout"].register_forward_pre_hook(hook_fn_forward_attn)
+
+
+    def forward_encoder(self, x, encoder):
+        encoder.eval()
+
+        if self.which_encoder in ['dinov2_vitb14', 'dinov2_vits14', 'dinov2_vitb14_reg', 'dinov2_vits14_reg']:
+            x = encoder.prepare_tokens_with_masks(x, None)
+        else:
+            x = encoder.prepare_tokens(x)
+
+        for blk in encoder.blocks:
+            x = blk(x)
+        if self.encoder_final_norm: # The DINOSAUR paper does not use the final norm layer according to the supplementary material.
+            x = encoder.norm(x)
+        
+        offset = 1
+        if self.which_encoder in ['dinov2_vitb14_reg', 'dinov2_vits14_reg']:
+            offset += encoder.num_register_tokens
+        elif self.which_encoder in ['simpool_vits16']:
+            offset += -1
+        x = x[:, offset :] # remove the [CLS] and (if they exist) registers tokens 
+
+        return x
+
+    def forward_decoder(self, slots, emb_target):
+        # Prepate the input tokens for the decoder transformer:
+        # (1) insert a learnable beggining-of-sequence ([BOS]) token at the beggining of each target embedding sequence.
+        # (2) remove the last token of the target embedding sequence
+        # (3) no need to add positional embeddings since positional information already exists at the DINO's outptu.
+
+        bos_token = self.bos_tokens
+        bos_token = bos_token.expand(emb_target.shape[0], -1, -1)
+       
+        dec_input = torch.cat((bos_token, emb_target[:, :-1, :]), dim=1)
+    
+        # dec_input has the same shape as emb_target, which is [B, N, D]
+        dec_input = self.input_proj(dec_input)
+
+        # Apply the decoder
+        dec_input_slots = self.slot_proj(slots) # shape: [B, num_slots, D]
+        dec_output = self.dec(dec_input, dec_input_slots, causal_mask=True)
+        # decoder_output shape [B, N, D]
+
+        dec_slots_attns = self.dec_slots_attns[0]
+        self.dec_slots_attns = []
+
+        # sum over the heads and 
+        dec_slots_attns = dec_slots_attns.sum(dim=1) # [B, N, num_slots]
+        # dec_slots_attns shape [B, num_heads, N, num_slots]
+        # L1-normalize over the slots so as to sum to 1.
+        dec_slots_attns = dec_slots_attns / dec_slots_attns.sum(dim=2, keepdim=True)
+
+        return dec_output, dec_slots_attns
+
+    def get_embeddings_n_slots(self, image):
+        """
+        image: batch_size x img_channels x H x W
+        """
+
+        B, _, H, W = image.size()
+        with torch.no_grad():
+            emb_target = self.forward_encoder(image, self.encoder)
+        # emb_target shape: B, N, D
+
+        # Apply the slot attention
+        slots, slots_attns, _ = self.slot_attn(emb_target)
+        return emb_target, slots, slots_attns
+
+    def forward(self, image):
+        """
+        image: batch_size x img_channels x H x W
+        """
+
+        B, _, H, W = image.size()
+        emb_input = self.forward_encoder(image, self.encoder)
+        with torch.no_grad():
+            emb_target = emb_input.clone().detach()
+        # emb_target shape: B, N, D
+
+        # Apply the slot attention
+        slots, slots_attns, init_slots, attn_logits = self.slot_attn(emb_input)
+        attn_logits = attn_logits.squeeze()
+        # slots shape: [B, num_slots, Ds]
+        # slots_attns shape: [B, N, num_slots]
+
+        # Apply the decoder.
+        dec_recon, dec_slots_attns = self.forward_decoder(slots, emb_target)
+
+        # Mean-Square-Error loss
+        H_enc, W_enc = int(math.sqrt(emb_target.shape[1])), int(math.sqrt(emb_target.shape[1]))
+        loss_mse = ((emb_target - dec_recon) ** 2).sum()/(B*H_enc*W_enc*self.d_model)
+
+        # Reshape the slot and decoder-slot attentions.
+        slots_attns = slots_attns.transpose(-1, -2).reshape(B, self.num_slots, H_enc, W_enc)
+        dec_slots_attns = dec_slots_attns.transpose(-1, -2).reshape(B, self.num_slots, H_enc, W_enc)
+
+        return loss_mse, slots_attns, dec_slots_attns, slots, dec_recon, attn_logits
+
+class DINOUp(nn.Module):
+    def __init__(self, upsampler, args):
+        super().__init__()
+        self.which_encoder = args.which_encoder
+        self.upsampler = upsampler
+        self.encoder_final_norm = args.encoder_final_norm
+        self.image_size = args.image_size
+        
+        for param in self.upsampler.parameters():
+            param.requires_grad = False  # not update by gradient
+            
+        # Estimate number of tokens for images of size args.image_size and
+        # embedding size (d_model)
+        with torch.no_grad():
+            x = torch.rand(1, args.img_channels, args.image_size, args.image_size)
+            x = self.forward_encoder(x, self.upsampler)
+            _, num_tokens, d_model = x.shape
+
+        args.d_model = d_model
+
+        self.num_slots = args.num_slots
+        self.d_model = args.d_model
+
+        self.slot_attn = SlotAttentionEncoder(
+            args.num_iterations, 
+            args.num_slots,
+            args.d_model, 
+            args.slot_size, 
+            args.mlp_hidden_size, 
+            args.pos_channels,
+            args.truncate, 
+            args.init_method
+        )
+        
+        self.slot_proj = nn.Sequential(
+            linear(args.slot_size, args.d_model, bias=False),
+            nn.LayerNorm(args.d_model),
+        )
+        self.dec = MlpDecoder(
+            object_dim=args.d_model, 
+            output_dim=args.d_model, 
+            num_patches=args.image_size**2, 
+            hidden_features=args.mlp_dec_hidden
+        )
+
+    def forward_encoder(self, x, upsampler):
+        upsampler.eval()
+        if self.which_encoder == 'dinov2':
+            x = upsampler.model.model.prepare_tokens_with_masks(x, None)
+        else:
+            x = upsampler.model.model.prepare_tokens(x)
+
+        for blk in upsampler.model.model.blocks:
+            x = blk(x)
+        if self.encoder_final_norm: # The DINOSAUR paper does not use the final norm layer according to the supplementary material.
+            x = upsampler.model.model.norm(x)
+        x = x[:, 1:] # remove the [CLS]
+        return x
+
+    def forward_decoder(self, slots):
+        # Adaptation of the Spatial-Broadcast Decoder.
+        dec_input_slots = self.slot_proj(slots) # shape: [B, num_slots, D]
+        recons, masks = self.dec(dec_input_slots)
+        return recons, masks
+
+    def forward(self, image):
+        """
+        image: batch_size x img_channels x H x W
+        """
+
+        B, _, H, W = image.size()
+        print(f"image.shape: {image.shape}")
+        emb_input = self.forward_encoder(image, self.upsampler)
+        print(f"emb_input.shape: {emb_input.shape}")
+        with torch.no_grad():
+            emb_target = self.upsampler.upsampler(emb_input).clone().detach()
+        # emb_target shape: B, N, D ==> here high res
+        print(f"emb_target.shape: {emb_target.shape}")
+
+        # Apply the slot attention
+        slots, slots_attns, _, attn_logits = self.slot_attn(emb_input)
+        print(f"slots.shape: {slots.shape} and slots_attns.shape: {slots_attns.shape}")
+        attn_logits = attn_logits.squeeze()
+        print(f"attn_logits.shape: {attn_logits.shape}")
+        # slots shape: [B, num_slots, Ds]
+        # slots_attns shape: [B, N, num_slots]
+
+        # Apply the decoder.
+        recons, dec_masks = self.forward_decoder(slots, emb_target)
+        print(f"recons.shape: {recons.shape} and dec masks shape: {dec_masks.shape}")
+
+        # Mean-Square-Error loss
+        H_enc, W_enc = int(math.sqrt(emb_target.shape[1])), int(math.sqrt(emb_target.shape[1]))
+        loss_mse = ((emb_target - recons) ** 2).sum()/(B*self.image_size*self.image_size*self.d_model)
+
+        # Reshape the slot and decoder-slot attentions.
+        slots_attns = slots_attns.transpose(-1, -2).reshape(B, self.num_slots, H_enc, W_enc)
+        dec_masks = dec_masks.transpose(-1, -2).reshape(B, self.num_slots, self.image_size, self.image_size)
+
+        return loss_mse, slots_attns, dec_masks, slots, attn_logits
 
 
 class SPOTEval(nn.Module):
