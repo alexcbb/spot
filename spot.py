@@ -492,26 +492,6 @@ class DINOUp(nn.Module):
             hidden_features=args.mlp_dec_hidden
         )
 
-    def forward_encoder(self, x, upsampler):
-        upsampler.eval()
-        if self.which_encoder == 'dinov2':
-            x = upsampler.model.model.prepare_tokens_with_masks(x, None)
-        else:
-            x = upsampler.model.model.prepare_tokens(x)
-
-        for blk in upsampler.model.model.blocks:
-            x = blk(x)
-        if self.encoder_final_norm: # The DINOSAUR paper does not use the final norm layer according to the supplementary material.
-            x = upsampler.model.model.norm(x)
-        x = x[:, 1:] # remove the [CLS]
-        return x
-
-    def forward_decoder(self, slots):
-        # Adaptation of the Spatial-Broadcast Decoder.
-        dec_input_slots = self.slot_proj(slots) # shape: [B, num_slots, D]
-        recons, masks = self.dec(dec_input_slots)
-        return recons, masks
-
     def forward(self, image):
         """
         image: batch_size x img_channels x H x W
@@ -519,13 +499,16 @@ class DINOUp(nn.Module):
 
         B, _, H, W = image.size()
         print(f"image.shape: {image.shape}")
-        emb_input = self.forward_encoder(image, self.upsampler)
+        self.upsampler.eval()
+        emb_input = self.upsampler.model(image)
         print(f"emb_input.shape: {emb_input.shape}")
         with torch.no_grad():
             emb_target = self.upsampler.upsampler(emb_input).clone().detach()
         # emb_target shape: B, N, D ==> here high res
         print(f"emb_target.shape: {emb_target.shape}")
-
+        emb_input = emb_input[:, 1:] # remove the [CLS] 
+        print(f"emb_input.shape no CLS: {emb_input.shape}")
+        
         # Apply the slot attention
         slots, slots_attns, _, attn_logits = self.slot_attn(emb_input)
         print(f"slots.shape: {slots.shape} and slots_attns.shape: {slots_attns.shape}")
@@ -535,7 +518,8 @@ class DINOUp(nn.Module):
         # slots_attns shape: [B, N, num_slots]
 
         # Apply the decoder.
-        recons, dec_masks = self.forward_decoder(slots, emb_target)
+        dec_input_slots = self.slot_proj(slots) # shape: [B, num_slots, D]
+        recons, dec_masks = self.dec(dec_input_slots)
         print(f"recons.shape: {recons.shape} and dec masks shape: {dec_masks.shape}")
 
         # Mean-Square-Error loss
