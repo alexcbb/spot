@@ -462,7 +462,8 @@ class DINOUp(nn.Module):
         # embedding size (d_model)
         with torch.no_grad():
             x = torch.rand(1, args.img_channels, args.image_size, args.image_size)
-            x = self.forward_encoder(x, self.upsampler)
+            self.upsampler.eval()
+            x = self.upsampler.model(x)
             _, num_tokens, d_model = x.shape
 
         args.d_model = d_model
