@@ -482,12 +482,13 @@ class DINOUp(nn.Module):
             args.init_method
         )
         
+        proj_size = int(args.slot_size//2)
         self.slot_proj = nn.Sequential(
-            linear(args.slot_size, args.d_model, bias=False),
-            nn.LayerNorm(args.d_model),
+            linear(args.slot_size, proj_size, bias=False),
+            nn.LayerNorm(proj_size),
         )
         self.dec = MlpDecoder(
-            object_dim=args.d_model, 
+            object_dim=proj_size, 
             output_dim=30, 
             num_patches=args.image_size**2, 
             hidden_features=args.mlp_dec_hidden
