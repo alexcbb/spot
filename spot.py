@@ -502,7 +502,7 @@ class DINOUp(nn.Module):
         self.upsampler.eval()
         emb_input = self.upsampler.model(image)
         with torch.no_grad():
-            emb_target = self.upsampler.upsampler(emb_input, image).clone().detach()
+            emb_target = self.upsampler.upsampler(emb_input, image).clone().detach().flatten(-2, -1).permute(0, 2, 1)
         # emb_target shape: B, N, D ==> here high res
         emb_input = emb_input.flatten(2).transpose(1, 2)
         
@@ -512,9 +512,7 @@ class DINOUp(nn.Module):
 
         # Apply the decoder.
         dec_input_slots = self.slot_proj(slots) # shape: [B, num_slots, D]
-        print(f"dec_input_slots.shape: {dec_input_slots.shape}")
         recons, dec_masks = self.dec(dec_input_slots)
-        print(f"recons.shape: {recons.shape} and dec masks shape: {dec_masks.shape}")
 
         # Mean-Square-Error loss
         H_enc, W_enc = int(math.sqrt(emb_target.shape[1])), int(math.sqrt(emb_target.shape[1]))
