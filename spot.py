@@ -499,16 +499,12 @@ class DINOUp(nn.Module):
         """
 
         B, _, H, W = image.size()
-        print(f"image.shape: {image.shape}")
         self.upsampler.eval()
         emb_input = self.upsampler.model(image)
-        print(f"emb_input.shape: {emb_input.shape}")
         with torch.no_grad():
-            emb_target = self.upsampler.upsampler(emb_input).clone().detach()
+            emb_target = self.upsampler.upsampler(emb_input, image).clone().detach()
         # emb_target shape: B, N, D ==> here high res
-        print(f"emb_target.shape: {emb_target.shape}")
         emb_input = emb_input.flatten(2).transpose(1, 2)
-        print(f"emb_input.shape reshape: {emb_input.shape}")
         
         # Apply the slot attention
         slots, slots_attns, _, attn_logits = self.slot_attn(emb_input)
