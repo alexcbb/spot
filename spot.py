@@ -664,7 +664,7 @@ class DINOUp(nn.Module):
         # Apply the decoder.
         # dec_input_slots = self.slot_proj(slots) # shape: [B, num_slots, D]
         # recons, dec_masks = self.dec(dec_input_slots)
-        decoder_in = slots.view(B * S, N, 1, 1)
+        decoder_in = slots.view(B * S, D, 1, 1)
         decoder_in = decoder_in.repeat(1, 1, self.dec_resolution[0], self.dec_resolution[1])
         out = self.decoder_pos_embedding(decoder_in)
         out = self.decoder(out)
@@ -673,7 +673,7 @@ class DINOUp(nn.Module):
         dec_masks = out[:, :, -1:, :, :]
         dec_masks = F.softmax(dec_masks, dim=1)  # [B, num_slots, 1, H, W]
         recons = torch.sum(recons * dec_masks, dim=1)  # [B, 3, H, W]
-        
+
         # Mean-Square-Error loss
         H_enc, W_enc = int(math.sqrt(emb_target.shape[1])), int(math.sqrt(emb_target.shape[1]))
         loss_mse = ((emb_target - recons) ** 2).sum()/(B*self.image_size*self.image_size*self.d_model)
