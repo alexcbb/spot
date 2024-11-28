@@ -506,7 +506,9 @@ class DINOUp(nn.Module):
         with torch.no_grad():
             emb_target = self.upsampler.upsampler(emb_input, image).clone().detach().flatten(-2, -1).permute(0, 2, 1)
             B, N, _ = emb_target.shape
+            print(f"emb_target shape: {emb_target.shape}")
             emb_target = self.pca.fit_transform(emb_target.flatten(0, 1)) # Reduce the dimensionality of the embeddings
+            print(f"emb_target shape after PCA: {emb_target.shape}")
             emb_target = emb_target.reshape(B, N, -1)
         # emb_target shape: B, N, D ==> here high res
         emb_input = emb_input.flatten(2).transpose(1, 2)
