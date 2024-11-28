@@ -3,7 +3,7 @@
 #SBATCH --job-name=dinosaur
 #SBATCH --output=logs/dinosaur.%j.out
 #SBATCH --error=logs/dinosaur.%j.err
-#SBATCH -A uli@h100
+#SBATCH -A uli@v100
 #SBATCH -C v100-32g
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
