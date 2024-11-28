@@ -24,6 +24,7 @@ module load pytorch-gpu/py3/2.0.0
 
 export TORCH_DISTRIBUTED_DEBUG=INFO
 export PYTHONPATH=.
+export WANDB_MODE=offline
 
 data_dir="./data/COCO/"
 output_dir="./output/dinosaur"
