@@ -648,6 +648,7 @@ class DINOUp(nn.Module):
         B, _, H, W = image.size()
         self.upsampler.eval()
         emb_input = self.upsampler.model(image)
+        H_enc, W_enc = int(math.sqrt(emb_input.shape[2])), int(math.sqrt(emb_input.shape[2]))
         with torch.no_grad():
             emb_target = self.upsampler.upsampler(emb_input, image).clone().detach().flatten(-2, -1).permute(0, 2, 1)
             B, N, C = emb_target.shape
@@ -676,7 +677,6 @@ class DINOUp(nn.Module):
         recons = recons.flatten(2, 3).permute(0, 2, 1)
 
         # Mean-Square-Error loss
-        H_enc, W_enc = int(math.sqrt(emb_target.shape[1])), int(math.sqrt(emb_target.shape[1]))
         loss_mse = ((emb_target - recons) ** 2).sum()/(B*self.image_size*self.image_size*self.d_model)
 
         # Reshape the slot and decoder-slot attentions.
