@@ -1,17 +1,17 @@
 #!/bin/bash
 
-#SBATCH --job-name=dinosaur_featup
-#SBATCH --output=logs/dinosaur_featup.%j.out
-#SBATCH --error=logs/dinosaur_featup.%j.err
+#SBATCH --job-name=dinosaur
+#SBATCH --output=logs/dinosaur.%j.out
+#SBATCH --error=logs/dinosaur.%j.err
 #SBATCH -A uli@h100
-#SBATCH -C h100
+#SBATCH -C v100-32g
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=24
+#SBATCH --cpus-per-task=10
 #SBATCH --hint=nomultithread
-#SBATCH -t 30:00:00
-#SBATCH --qos=qos_gpu_h100-t4
+#SBATCH -t 20:00:00
+#SBATCH --qos=qos_gpu-t3
 #SBATCH --mail-user=alexandre.chapin@ec-lyon.fr
 #SBATCH --mail-typ=FAIL
 
@@ -20,8 +20,7 @@ echo ${SLURM_NODELIST}
 source ~/.bashrc
 
 module purge
-module load arch/h100
-module load pytorch-gpu/py3/2.4.0
+module load pytorch-gpu/py3/2.0.0
 
 export TORCH_DISTRIBUTED_DEBUG=INFO
 export PYTHONPATH=.
