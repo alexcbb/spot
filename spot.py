@@ -683,7 +683,7 @@ class DINOUp(nn.Module):
         slots_attns = slots_attns.transpose(-1, -2).reshape(B, self.num_slots, H_enc, W_enc)
         dec_masks = dec_masks.transpose(-1, -2).reshape(B, self.num_slots, self.image_size, self.image_size)
 
-        return loss_mse, slots_attns, dec_masks, slots, attn_logits
+        return loss_mse, slots_attns, dec_masks, slots, attn_logits, None
 
 
 class SPOTEval(nn.Module):
