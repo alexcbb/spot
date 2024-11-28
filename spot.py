@@ -606,7 +606,7 @@ class DINOUp(nn.Module):
             hidden_features=args.mlp_dec_hidden
         )"""
 
-        self.dec_channels = [64, 64, 64, 64, 64]
+        self.dec_channels = [args.slot_size, 64, 64, 64, 64]
         self.dec_resolution = (7, 7) # broadcast size
         self.dec_ks = 5  # kernel size
         self.dec_norm = ''  # norm in CNN
