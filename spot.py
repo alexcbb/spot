@@ -447,6 +447,118 @@ class DINOSlot(nn.Module):
 
         return loss_mse, slots_attns, dec_slots_attns, slots, dec_recon, attn_logits
 
+
+
+def get_normalizer(norm, channels, groups=16, dim='2d'):
+    """Get normalization layer."""
+    if norm == '':
+        return nn.Identity()
+    elif norm == 'bn':
+        return eval(f'nn.BatchNorm{dim}')(channels)
+    elif norm == 'gn':
+        # 16 is taken from Table 3 of the GN paper
+        return nn.GroupNorm(groups, channels)
+    elif norm == 'in':
+        return eval(f'nn.InstanceNorm{dim}')(channels)
+    elif norm == 'ln':
+        return nn.LayerNorm(channels)
+    else:
+        raise ValueError(f'Normalizer {norm} not supported!')
+
+
+def get_act_func(act):
+    """Get activation function."""
+    if act == '':
+        return nn.Identity()
+    if act == 'relu':
+        return nn.ReLU(inplace=True)
+    elif act == 'leakyrelu':
+        return nn.LeakyReLU()
+    elif act == 'tanh':
+        return nn.Tanh()
+    elif act == 'sigmoid':
+        return nn.Sigmoid()
+    elif act == 'swish':
+        return nn.SiLU()
+    elif act == 'elu':
+        return nn.ELU()
+    elif act == 'softplus':
+        return nn.Softplus()
+    elif act == 'mish':
+        return nn.Mish()
+    elif act == 'gelu':
+        return nn.GELU()
+    else:
+        raise ValueError(f'Activation function {act} not supported!')
+    
+def deconv_norm_act(
+    in_channels,
+    out_channels,
+    kernel_size,
+    stride=1,
+    dilation=1,
+    groups=1,
+    norm='bn',
+    act='relu',
+    dim='2d',
+):
+    """ConvTranspose - Norm - Act."""
+    deconv = nn.ConvTranspose2d(
+        in_channels,
+        out_channels,
+        kernel_size,
+        stride=stride,
+        padding=kernel_size // 2,
+        output_padding=stride - 1,
+        dilation=dilation,
+        groups=groups,
+        bias=norm not in ['bn', 'in'],
+    )
+    normalizer = get_normalizer(norm, out_channels, dim=dim)
+    act_func = get_act_func(act)
+    return nn.Sequential(deconv, normalizer, act_func)
+
+def deconv_out_shape(
+    in_size,
+    stride,
+    padding,
+    kernel_size,
+    out_padding,
+    dilation=1,
+):
+    """Calculate the output shape of a ConvTranspose layer."""
+    if isinstance(in_size, int):
+        return (in_size - 1) * stride - 2 * padding + dilation * (
+            kernel_size - 1) + out_padding + 1
+    elif isinstance(in_size, (tuple, list)):
+        return type(in_size)((deconv_out_shape(s, stride, padding, kernel_size,
+                                               out_padding, dilation)
+                              for s in in_size))
+    else:
+        raise TypeError(f'Got invalid type {type(in_size)} for `in_size`')
+
+def build_grid(resolution):
+    """return grid with shape [1, H, W, 4]."""
+    ranges = [torch.linspace(0.0, 1.0, steps=res) for res in resolution]
+    grid = torch.meshgrid(*ranges, indexing='ij')
+    grid = torch.stack(grid, dim=-1)
+    grid = torch.reshape(grid, [resolution[0], resolution[1], -1])
+    grid = grid.unsqueeze(0)
+    return torch.cat([grid, 1.0 - grid], dim=-1)
+
+class SoftPositionEmbed(nn.Module):
+    """Soft PE mapping normalized coords to feature maps."""
+
+    def __init__(self, hidden_size, resolution):
+        super().__init__()
+        self.dense = nn.Linear(in_features=4, out_features=hidden_size)
+        self.register_buffer('grid', build_grid(resolution))  # [1, H, W, 4]
+
+    def forward(self, inputs):
+        """inputs: [B, C, H, W]."""
+        emb_proj = self.dense(self.grid).permute(0, 3, 1, 2).contiguous()
+        return inputs + emb_proj
+    
 class DINOUp(nn.Module):
     def __init__(self, upsampler, args):
         super().__init__()
@@ -482,19 +594,51 @@ class DINOUp(nn.Module):
             args.init_method
         )
         
-        proj_size = int(args.slot_size//2)
+        """proj_size = int(args.slot_size//2)
         self.slot_proj = nn.Sequential(
             linear(args.slot_size, proj_size, bias=False),
             nn.LayerNorm(proj_size),
-        )
-        self.dec = MlpDecoder(
+        )"""
+        """self.dec = MlpDecoder(
             object_dim=proj_size, 
             output_dim=30, 
             num_patches=args.image_size**2, 
             hidden_features=args.mlp_dec_hidden
-        )
+        )"""
 
-        self.pca = PCA(n_components=30,) # TODO : choose the right num of components
+        self.dec_channels = [64, 64, 64, 64, 64]
+        self.dec_resolution = (7, 7) # broadcast size
+        self.dec_ks = 5  # kernel size
+        self.dec_norm = ''  # norm in CNN
+        self.decoder_pos_embedding  = None
+        modules = []
+        in_size = self.dec_resolution[0]
+        out_size = in_size
+        stride = 2
+        for i in range(len(self.dec_channels) - 1):
+            if out_size == self.image_size:
+                stride = 1
+            modules.append(
+                deconv_norm_act(
+                    self.dec_channels[i],
+                    self.dec_channels[i + 1],
+                    kernel_size=self.dec_ks,
+                    stride=stride,
+                    norm=self.dec_norm,
+                    act='relu'))
+            out_size = deconv_out_shape(out_size, stride, self.dec_ks // 2,
+                                        self.dec_ks, stride - 1)
+
+        # out Conv for RGB and seg mask
+        modules.append(
+            nn.Conv2d(
+                self.dec_channels[-1], args.d_model, kernel_size=1, stride=1, padding=0))
+
+        self.decoder = nn.Sequential(*modules)
+        self.decoder_pos_embedding = SoftPositionEmbed(args.slot_size,
+                                                    self.dec_resolution)
+
+        # self.pca = PCA(n_components=30,) # TODO : choose the right num of components
 
     def forward(self, image):
         """
@@ -506,22 +650,30 @@ class DINOUp(nn.Module):
         emb_input = self.upsampler.model(image)
         with torch.no_grad():
             emb_target = self.upsampler.upsampler(emb_input, image).clone().detach().flatten(-2, -1).permute(0, 2, 1)
-            B, N, _ = emb_target.shape
-            print(f"emb_target shape: {emb_target.shape}")
-            emb_target = self.pca.fit_transform(emb_target.flatten(0, 1)) # Reduce the dimensionality of the embeddings
-            print(f"emb_target shape after PCA: {emb_target.shape}")
+            B, N, C = emb_target.shape
+            # emb_target = self.pca.fit_transform(emb_target.flatten(0, 1)) # Reduce the dimensionality of the embeddings
             emb_target = emb_target.reshape(B, N, -1)
         # emb_target shape: B, N, D ==> here high res
         emb_input = emb_input.flatten(2).transpose(1, 2)
         
         # Apply the slot attention
         slots, slots_attns, _, attn_logits = self.slot_attn(emb_input)
+        B, S, D = slots.shape
         attn_logits = attn_logits.squeeze()
 
         # Apply the decoder.
-        dec_input_slots = self.slot_proj(slots) # shape: [B, num_slots, D]
-        recons, dec_masks = self.dec(dec_input_slots)
-
+        # dec_input_slots = self.slot_proj(slots) # shape: [B, num_slots, D]
+        # recons, dec_masks = self.dec(dec_input_slots)
+        decoder_in = slots.view(B * S, N, 1, 1)
+        decoder_in = decoder_in.repeat(1, 1, self.dec_resolution[0], self.dec_resolution[1])
+        out = self.decoder_pos_embedding(decoder_in)
+        out = self.decoder(out)
+        out = out.view(B, S, C + 1, self.image_size, self.image_size)
+        recons = out[:, :, :C, :, :]  # [B, num_slots, 3, H, W]
+        dec_masks = out[:, :, -1:, :, :]
+        dec_masks = F.softmax(dec_masks, dim=1)  # [B, num_slots, 1, H, W]
+        recons = torch.sum(recons * dec_masks, dim=1)  # [B, 3, H, W]
+        
         # Mean-Square-Error loss
         H_enc, W_enc = int(math.sqrt(emb_target.shape[1])), int(math.sqrt(emb_target.shape[1]))
         loss_mse = ((emb_target - recons) ** 2).sum()/(B*self.image_size*self.image_size*self.d_model)

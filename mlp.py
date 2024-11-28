@@ -42,7 +42,7 @@ class MlpDecoder(nn.Module):
         masks = alpha.squeeze(-1)
         
         return reconstruction, masks
-    
+
     
 def build_mlp(input_dim = int, output_dim = int, hidden_features = 2048, n_hidden_layers = 3):
     
